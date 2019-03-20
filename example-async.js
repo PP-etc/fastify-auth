@@ -1,5 +1,6 @@
 'use strict'
 
+const util = require('util')
 const Fastify = require('fastify')
 
 function build (opts) {
@@ -14,45 +15,46 @@ function build (opts) {
   fastify.decorate('verifyJWTandLevel', verifyJWTandLevel)
   fastify.decorate('verifyUserAndPassword', verifyUserAndPassword)
 
-  function verifyJWTandLevel (request, reply) {
+  function verifyJWTandLevel (request, reply, done) {
     const jwt = this.jwt
     const level = this.level
 
-    return new Promise(function (resolve, reject) {
-      if (request.body && request.body.failureWithReply) {
-        reply.code(401).send({ 'error': 'Unauthorized' })
-        return reject(new Error())
+    if (request.body && request.body.failureWithReply) {
+      reply.code(401).send({ 'error': 'Unauthorized' })
+      return done(new Error())
+    }
+
+    if (!request.req.headers['auth']) {
+      return done(new Error('Missing token header'))
+    }
+
+    return util.promisify(jwt.verify)(request.req.headers['auth'])
+      .then(onVerify)
+      .catch(function (err) {
+        if (err) {
+          return done(new Error('Token not valid'))
+        }
+      })
+
+    function onVerify (decoded) {
+      if (!decoded.user || !decoded.password) {
+        return done(new Error('Token not valid'))
       }
+      level.get(decoded.user, onUser)
 
-      if (!request.req.headers['auth']) {
-        return reject(new Error('Missing token header'))
-      }
-
-      jwt.verify(request.req.headers['auth'], onVerify)
-
-      function onVerify (err, decoded) {
-        if (err || !decoded.user || !decoded.password) {
-          return reject(new Error('Token not valid'))
+      function onUser (err, password) {
+        if (err) {
+          if (err.notFound) {
+            return done(new Error('Token not valid'))
+          }
+          return done(err)
         }
 
-        level.get(decoded.user, onUser)
-
-        function onUser (err, password) {
-          if (err) {
-            if (err.notFound) {
-              return reject(new Error('Token not valid'))
-            }
-            return reject(err)
-          }
-
-          if (!password || password !== decoded.password) {
-            return reject(new Error('Token not valid'))
-          }
-
-          resolve()
+        if (!password || password !== decoded.password) {
+          return done(new Error('Token not valid'))
         }
       }
-    })
+    }
   }
 
   function verifyUserAndPassword (request, reply, done) {
