@@ -20,7 +20,7 @@ function build (opts) {
     const level = this.level
 
     if (request.body && request.body.failureWithReply) {
-      reply.code(401).send({ 'error': 'Unauthorized' })
+      reply.code(401).send({ error: 'Unauthorized' })
       return done(new Error())
     }
 
@@ -28,33 +28,29 @@ function build (opts) {
       return done(new Error('Missing token header'))
     }
 
-    return util.promisify(jwt.verify)(request.req.headers['auth'])
-      .then(onVerify)
-      .catch(function (err) {
-        if (err) {
-          return done(new Error('Token not valid'))
+    return util
+      .promisify(jwt.verify)(request.req.headers['auth'])
+      .then(function (decoded) {
+        if (!decoded.user || !decoded.password) {
+          throw new Error('Token not valid')
         }
+        util
+          .promisify(level.get).bind(level)(decoded.user)
+          .then(function (password) {
+            if (!password || password !== decoded.password) {
+              throw new Error('Token not valid')
+            }
+          })
+          .catch(function (err) {
+            if (err.notFound) {
+              throw new Error('Token not valid')
+            }
+            throw err
+          })
       })
-
-    function onVerify (decoded) {
-      if (!decoded.user || !decoded.password) {
-        return done(new Error('Token not valid'))
-      }
-      level.get(decoded.user, onUser)
-
-      function onUser (err, password) {
-        if (err) {
-          if (err.notFound) {
-            return done(new Error('Token not valid'))
-          }
-          return done(err)
-        }
-
-        if (!password || password !== decoded.password) {
-          return done(new Error('Token not valid'))
-        }
-      }
-    }
+      .catch(function () {
+        throw new Error('Token not valid')
+      })
   }
 
   function verifyUserAndPassword (request, reply, done) {
@@ -153,7 +149,9 @@ if (require.main === module) {
   })
   fastify.listen(3000, err => {
     if (err) throw err
-    console.log(`Server listenting at http://localhost:${fastify.server.address().port}`)
+    console.log(
+      `Server listenting at http://localhost:${fastify.server.address().port}`
+    )
   })
 }
 
